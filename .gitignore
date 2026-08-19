@@ -1,0 +1,26 @@
+﻿# Secrets - .env.example (template, no real keys) IS meant to be
+# committed; only the real .env with actual API keys is excluded.
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+venv/
+.venv/
+*.egg-info/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# NOTE: evaluation/reports/ is intentionally NOT ignored - those JSON
+# files are the real measured evidence (guardrail 11/11, latency
+# P50/P70/P100) referenced in README.md and worth keeping in the repo.
+
+retrieval/_debug_query.txt

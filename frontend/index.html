@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>श्रवण · Voice RAG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600&family=Noto+Sans+Devanagari:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0E0F13;
+    --surface: #171A21;
+    --surface-raised: #1F232C;
+    --border: #2A2E38;
+    --text: #EDEBE4;
+    --text-muted: #8B8F9C;
+    --accent: #7C6FEF;
+    --accent-soft: rgba(124, 111, 239, 0.15);
+    --wave: #2DD4BF;
+    --ok: #4ADE80;
+    --warn: #FBBF24;
+    --danger: #F87171;
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-body: 'Manrope', sans-serif;
+    --font-deva: 'Noto Sans Devanagari', 'Manrope', sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(124,111,239,0.12), transparent),
+      radial-gradient(ellipse 60% 40% at 90% 100%, rgba(45,212,191,0.06), transparent);
+    color: var(--text);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px 80px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 40px;
+    max-width: 560px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-body);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--wave);
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: 34px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+
+  h1 .deva {
+    font-family: var(--font-deva);
+    color: var(--accent);
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  main {
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* --- Mic control: the signature element. Concentric rings expand
+     outward while recording, echoing a sound wave propagating from
+     the mic — ties the visual identity directly to what the product
+     does, rather than decorating it. --- */
+  .mic-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 36px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+  }
+
+  .mic-ring-wrap {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mic-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--wave);
+    opacity: 0;
+  }
+
+  .recording .mic-ring {
+    animation: ripple 1.8s ease-out infinite;
+  }
+  .recording .mic-ring.r2 { animation-delay: 0.6s; }
+  .recording .mic-ring.r3 { animation-delay: 1.2s; }
+
+  @keyframes ripple {
+    0%   { transform: scale(0.7); opacity: 0.7; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .recording .mic-ring { animation: none; opacity: 0.35; }
+  }
+
+  .mic-btn {
+    position: relative;
+    z-index: 1;
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    border: none;
+    background: linear-gradient(160deg, var(--accent), #5B4FD6);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 8px 24px rgba(124,111,239,0.35);
+  }
+  .mic-btn:hover { transform: scale(1.04); }
+  .mic-btn:active { transform: scale(0.97); }
+  .recording .mic-btn {
+    background: linear-gradient(160deg, var(--danger), #C74A4A);
+    box-shadow: 0 8px 24px rgba(248,113,113,0.35);
+  }
+
+  .mic-status {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+    min-height: 18px;
+  }
+  .recording .mic-status { color: var(--wave); }
+
+  .text-fallback {
+    display: flex;
+    gap: 10px;
+  }
+
+  .text-fallback input {
+    flex: 1;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-family: var(--font-deva);
+    font-size: 15px;
+  }
+  .text-fallback input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .text-fallback button {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 0 18px;
+    font-family: var(--font-body);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .text-fallback button:hover { border-color: var(--accent); }
+
+  /* --- Result panel --- */
+  .result {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 24px;
+    animation: fade-in 0.25s ease;
+  }
+  .result.visible { display: block; }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 999px;
+    margin-bottom: 14px;
+  }
+  .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge.answered_fast, .badge.answered_polished { background: rgba(74,222,128,0.12); color: var(--ok); }
+  .badge.abstained { background: rgba(251,191,36,0.12); color: var(--warn); }
+  .badge.blocked, .badge.error { background: rgba(248,113,113,0.12); color: var(--danger); }
+
+  .transcript-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  .transcript {
+    font-family: var(--font-deva);
+    font-size: 16px;
+    color: var(--text);
+    margin: 0 0 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .answer {
+    font-family: var(--font-deva);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0 0 16px;
+  }
+
+  .answer.muted { color: var(--text-muted); font-family: var(--font-body); font-size: 15px; }
+
+  /* Grounding meter - the one place the underlying gate score is made
+     visible, since that gate is the actual technical differentiator. */
+  .grounding-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .grounding-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .grounding-track {
+    flex: 1;
+    height: 6px;
+    background: var(--surface-raised);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .grounding-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.4s ease;
+  }
+  .grounding-score { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+  .latency-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .latency-chip {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .latency-chip strong { color: var(--text); font-weight: 600; }
+
+  footer {
+    margin-top: 48px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    max-width: 480px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">HH Goa 2026 · Task 2</div>
+  <h1><span class="deva">श्रवण</span> Voice RAG</h1>
+  <p class="subtitle">Ask a question by voice or text. Answers are retrieved from a Hindi corpus and gated — the system says so when it doesn't have enough evidence, rather than guessing.</p>
+</header>
+
+<main>
+  <div class="mic-stage" id="micStage">
+    <div class="mic-ring-wrap">
+      <div class="mic-ring r1"></div>
+      <div class="mic-ring r2"></div>
+      <div class="mic-ring r3"></div>
+      <button class="mic-btn" id="micBtn" aria-label="Start recording">
+        <svg id="micIcon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="mic-status" id="micStatus">Tap to speak</div>
+  </div>
+
+  <div class="text-fallback">
+    <input type="text" id="textInput" placeholder="…or type a question in Hindi or English" />
+    <button id="sendBtn">Ask</button>
+  </div>
+
+  <div class="result" id="result">
+    <span class="badge" id="badge"></span>
+
+    <div id="transcriptBlock">
+      <div class="transcript-label">You asked</div>
+      <p class="transcript" id="transcriptText"></p>
+    </div>
+
+    <p class="answer" id="answerText"></p>
+
+    <div class="grounding-row" id="groundingRow" style="display:none">
+      <span class="grounding-label">Grounding</span>
+      <div class="grounding-track"><div class="grounding-fill" id="groundingFill"></div></div>
+      <span class="grounding-score" id="groundingScore"></span>
+    </div>
+
+    <div class="latency-strip" id="latencyStrip"></div>
+  </div>
+</main>
+
+<footer>
+  Fast path answers are guaranteed under the measured &lt;200ms retrieval budget. Voice input adds ElevenLabs STT time on top, reported separately.
+</footer>
+
+<script>
+const API_BASE = ''; // same-origin: FastAPI serves this file and /api/*
+
+const micStage = document.getElementById('micStage');
+const micBtn = document.getElementById('micBtn');
+const micStatus = document.getElementById('micStatus');
+const textInput = document.getElementById('textInput');
+const sendBtn = document.getElementById('sendBtn');
+
+const resultEl = document.getElementById('result');
+const badgeEl = document.getElementById('badge');
+const transcriptBlock = document.getElementById('transcriptBlock');
+const transcriptText = document.getElementById('transcriptText');
+const answerText = document.getElementById('answerText');
+const groundingRow = document.getElementById('groundingRow');
+const groundingFill = document.getElementById('groundingFill');
+const groundingScore = document.getElementById('groundingScore');
+const latencyStrip = document.getElementById('latencyStrip');
+
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+const STATUS_LABELS = {
+  answered_fast: 'Answered',
+  answered_polished: 'Answered · polished',
+  abstained: 'Abstained — not enough evidence',
+  blocked: 'Blocked by guardrail',
+  error: 'Error',
+};
+
+function setBadge(status) {
+  badgeEl.textContent = STATUS_LABELS[status] || status;
+  badgeEl.className = 'badge ' + status;
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function sendQuery(payload) {
+  resultEl.classList.remove('visible');
+  micStatus.textContent = payload.audio_base64 ? 'Transcribing & thinking…' : 'Thinking…';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    renderResult(data);
+  } catch (err) {
+    setBadge('error');
+    transcriptBlock.style.display = 'none';
+    answerText.className = 'answer muted';
+    answerText.textContent = 'Could not reach the server: ' + err.message;
+    groundingRow.style.display = 'none';
+    latencyStrip.innerHTML = '';
+    resultEl.classList.add('visible');
+  } finally {
+    micStatus.textContent = 'Tap to speak';
+  }
+}
+
+function renderResult(data) {
+  setBadge(data.status);
+
+  if (data.transcript) {
+    transcriptBlock.style.display = 'block';
+    transcriptText.textContent = data.transcript;
+  } else {
+    transcriptBlock.style.display = 'none';
+  }
+
+  const polished = data.polished_answer && data.polished_answer.text;
+  const fast = data.fast_answer && data.fast_answer.text;
+
+  if (polished) {
+    answerText.className = 'answer';
+    answerText.textContent = polished;
+  } else if (fast) {
+    answerText.className = 'answer';
+    answerText.textContent = fast;
+  } else {
+    answerText.className = 'answer muted';
+    answerText.textContent = data.message || 'No answer.';
+  }
+
+  if (data.grounding && typeof data.grounding.score === 'number') {
+    const score = data.grounding.score;
+    groundingRow.style.display = 'flex';
+    groundingFill.style.width = Math.round(score * 100) + '%';
+    groundingFill.style.background = data.grounding.supported ? 'var(--ok)' : 'var(--warn)';
+    groundingScore.textContent = score.toFixed(3);
+  } else {
+    groundingRow.style.display = 'none';
+  }
+
+  latencyStrip.innerHTML = '';
+  const lat = data.latency || {};
+  const chips = [];
+  if (typeof lat.stt_ms === 'number') chips.push(['STT', lat.stt_ms]);
+  if (typeof lat.fast_path_total_ms === 'number') chips.push(['Retrieval', lat.fast_path_total_ms]);
+  if (typeof lat.end_to_end_ms === 'number') chips.push(['End-to-end', lat.end_to_end_ms]);
+  else if (typeof lat.total_ms === 'number') chips.push(['Total', lat.total_ms]);
+
+  for (const [label, ms] of chips) {
+    const chip = document.createElement('span');
+    chip.className = 'latency-chip';
+    chip.innerHTML = `${label}: <strong>${ms.toFixed(0)}ms</strong>`;
+    latencyStrip.appendChild(chip);
+  }
+
+  resultEl.classList.add('visible');
+}
+
+// --- Mic recording ---
+micBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    mediaRecorder.stop();
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      isRecording = false;
+      micStage.classList.remove('recording');
+      stream.getTracks().forEach((t) => t.stop());
+
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      const base64 = await blobToBase64(blob);
+      sendQuery({ audio_base64: base64, audio_content_type: 'audio/webm', mode: 'fast' });
+    };
+
+    mediaRecorder.start();
+    isRecording = true;
+    micStage.classList.add('recording');
+    micStatus.textContent = 'Listening… tap to stop';
+  } catch (err) {
+    micStatus.textContent = 'Microphone access denied';
+  }
+});
+
+// --- Text fallback ---
+function submitText() {
+  const text = textInput.value.trim();
+  if (!text) return;
+  sendQuery({ text, mode: 'fast' });
+}
+sendBtn.addEventListener('click', submitText);
+textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitText(); });
+</script>
+
+</body>
+</html>
