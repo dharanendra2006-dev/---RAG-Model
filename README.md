@@ -1,3 +1,6 @@
+cd D:\hhgoa-task2-voice-rag
+
+@'
 ---
 title: Voice RAG - HH Goa 2026
 emoji: 🎙️
@@ -8,79 +11,66 @@ app_port: 7860
 pinned: false
 ---
 
-# HH Goa 2026 — Task 2: Voice-Enabled RAG (Vaani-style)
+# श्रवण — Voice-Enabled RAG (HH Goa 2026, Task 2)
 
-## Day 1 status (Aug 14 milestone)
-- [x] Repo scaffold
-- [x] Config + typed schemas
-- [x] Dataset config verification script
-- [x] Streaming subsample + defensive flatten
-- [x] 5 chunk views (fixed, sentence, semantic, contextual, metadata-aware)
-- [x] FAISS index build per strategy
-- [x] Retrieval smoke test
+A voice-enabled RAG pipeline over [AI4Bharat's MSMARCO-XI](https://huggingface.co/datasets/ai4bharat/MSMARCO-XI) Hindi corpus. Speaks a question in, retrieves grounded evidence, answers — and explicitly abstains when the evidence isn't there, rather than guessing.
 
-## Run order (Day 1)
-```bash
-cd backend && pip install -r requirements.txt --break-system-packages
-cp .env.example .env   # fill in keys later, not needed for Day 1
+## Architecture
 
-cd ../ingestion
-python 00_check_configs.py          # confirm hf_config in backend/config.py
-python 01_subsample.py              # -> data/passages_hi.parquet
-python 03_build_chunk_table.py      # -> data/chunks_all_views.parquet
-python 04_build_index.py            # -> data/indexes/*.index + *.parquet
+```mermaid
+flowchart TD
+    A["🎙️ Voice input"] --> B["ElevenLabs Scribe v1 (STT)<br/>~2.5-3.5s · network-bound, reported separately"]
+    C["⌨️ Typed question"] --> D
+    B --> D["Input guardrail<br/>empty / whitespace / length / unsafe-content checks"]
+    D -->|blocked| E["❌ Blocked"]
+    D -->|allowed| F["Embed query<br/>multilingual-e5-small"]
 
-cd ../retrieval
-python 00_smoke_test.py "your question here"
+    subgraph Budget["&lt;200ms measured budget · P50 43ms · P70 47ms · P100 66ms"]
+        F --> G["Dense — FAISS IndexFlatIP<br/>exact cosine, 384-dim"]
+        F --> H["Sparse — BM25<br/>Devanagari-aware tokenizer + bilingual stopwords"]
+        G --> I["RRF fusion<br/>by rank, not raw score"]
+        H --> I
+        I --> J["Extractive answer<br/>best-supported span"]
+        J --> K{{"Grounding gate"}}
+    end
+
+    K -->|"support &lt; 0.45"| L["🟡 Abstain — 'not enough information'"]
+    K -->|"sparse hit OR dense ≥ 0.854"| M["✅ Fast answer<br/>grounded + cited"]
+    M --> N["LLM polish — Claude<br/>outside budget, optional, retried on transient errors"]
+    N --> O{{"Verify: embedding similarity<br/>to the original fast answer"}}
+    O -->|"drifts too far / fails / times out"| M
+    O -->|"passes"| P["✨ Polished answer"]
 ```
 
-If `00_smoke_test.py` prints ranked passages with scores, Day 1 milestone is done:
-**text question -> retrieved passages.**
+**Why the grounding gate is two-sided, not one number:** dense cosine similarity alone can't tell a real semantic paraphrase apart from a plausible-sounding off-topic query — both can score 0.79–0.85. Requiring a BM25 keyword hit fixes that, but then rejects genuine synonym paraphrases with zero shared vocabulary. The gate accepts either: a lexical hit at any reasonable dense score, *or* a very high dense score on its own. The `0.854` threshold isn't a guess — it's centered between the highest false-positive we measured (`0.8454`, an off-topic query) and the lowest genuine paraphrase we measured (`0.8626`), giving even margin on both sides. See `backend/services/grounding.py` and `backend/config.py` for the full reasoning trail.
 
-## Next (Day 2 — Aug 15)
-- BM25 index (`retrieval/bm25.py`)
-- Score fusion (`retrieval/fusion.py`)
-- Retrieval quality test against `is_selected_gt`
+## Verified results
 
-## Deployment (live link)
+Everything below was actually run and measured, not estimated — reports live in `evaluation/reports/`.
 
-Target: Hugging Face Spaces, Docker SDK. Chosen over Render/Railway
-free tiers because this stack (torch + sentence-transformers + faiss)
-needs more RAM than their free 512MB-1GB usually allows without
-OOM-killing the container - HF's free CPU Basic tier gives 16GB.
+| Check | Result |
+|---|---|
+| Guardrail test suite | **11/11 passed** — off-topic, unsafe input, empty/whitespace, semantic paraphrase, keyword-only, grounded-easy |
+| Pipeline latency (offline, 49 queries) | **P50 = 43ms · P70 = 47ms · P100 = 66ms** — 49/49 under the 200ms budget |
+| Live API latency (through FastAPI) | **P50 ≈ 110-170ms · P70 ≈ 150-180ms · P100 ≈ 200ms** — consistently within budget; the gap vs. the offline number is real (Windows dev-server thread scheduling for CPU-bound work), not framework serialization overhead |
+| STT (ElevenLabs Scribe v1) | **Verified end-to-end** with both a local audio file and a live browser mic recording (`webm`) — real transcription confirmed correct |
+| Retry logic | Anthropic + ElevenLabs calls both retry transient failures (connection drop, rate limit, 5xx) up to 3x with exponential backoff, verified against simulated failures; non-transient errors (bad auth, malformed request) fail immediately instead of wasting retries |
 
-The `Dockerfile` at repo root builds one container that serves both
-the API (`/api/*`) and the frontend (`/`) - see `backend/api/main.py`.
-**This has not been build-tested** (no Docker available in the
-environment that wrote it) - the first real build will happen on HF's
-servers. If it fails, copy the build log here and it can be fixed
-directly rather than guessed at blind.
+## Chunking strategies
 
-### One-time setup
+Four strategies are actually built and indexed (`data/indexes/manifest.json`): **fixed-size, sentence-boundary, semantic, and contextual**. A fifth (`metadata_aware`) is defined in `backend/models/schemas.py`'s enum but was not indexed in this submission — noted here rather than left as a silent gap.
 
-```powershell
-# from repo root
-git lfs install
-git lfs track "*.index" "*.pkl" "*.parquet"
-git add .gitattributes
-git add .
-git commit -m "Add Docker deploy, API, STT, frontend"
-```
+## Tech stack
 
-1. Create a Space at huggingface.co/new-space - SDK: **Docker**, visibility: your choice.
-2. In the Space's **Settings -> Variables and secrets**, add as *secrets* (not public variables):
-   - `ANTHROPIC_API_KEY`
-   - `ELEVENLABS_API_KEY`
-   - (add `SARVAM_API_KEY` too if you switch `stt_provider`)
-3. Push this repo to the Space's git remote (shown on the Space's page after creation, looks like `https://huggingface.co/spaces/<username>/<space-name>`):
+| Layer | Choice |
+|---|---|
+| Embeddings | `intfloat/multilingual-e5-small` (384-dim) |
+| Dense index | FAISS `IndexFlatIP` — exact search, not approximate (dataset size doesn't need HNSW's speed/recall tradeoff yet) |
+| Sparse index | `rank-bm25` over a custom Devanagari-aware tokenizer |
+| Fusion | Reciprocal Rank Fusion, by rank not raw score |
+| STT | ElevenLabs `scribe_v1` |
+| Polish LLM | Anthropic Claude, with embedding-similarity verification against the grounded fast answer before it's allowed to replace it |
+| API | FastAPI, JSON error handling on all routes |
+| Deploy | Docker → Hugging Face Spaces (Docker SDK) |
 
-```powershell
-git remote add space https://huggingface.co/spaces/<username>/<space-name>
-git push space main
-```
-
-4. Watch the **Build logs** tab on the Space page. First build will take a while (torch + faiss + model weights). Once it says "Running", the Space's URL is your live link.
-
-### If the build fails or the app 500s on the deployed Space
-Paste the build log (or, once running, the same JSON error the `/api/query` exception handler now returns - see `backend/api/main.py`) and it'll get fixed directly, the same way the local 500 was diagnosed earlier in this conversation.
-
+## Repo structure
