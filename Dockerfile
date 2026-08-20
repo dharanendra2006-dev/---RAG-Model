@@ -20,6 +20,11 @@ COPY backend/requirements.txt /app/backend/requirements.txt
 # unused NVIDIA libs), which is what OOM'd the 512MB Render tier.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+# Bake the embedding model into the image at build time so
+# HF_HUB_OFFLINE=1 (set in retrieval/hybrid_search.py) has a real
+# cache to read from at runtime - avoids a live huggingface.co
+# download (and its failure risk) on every cold container start.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
 
 COPY backend /app/backend
 COPY retrieval /app/retrieval
