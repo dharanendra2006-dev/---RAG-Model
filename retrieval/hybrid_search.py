@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import faiss
 from sentence_transformers import SentenceTransformer
+import torch
+torch.set_num_threads(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 from config import settings  # noqa: E402
