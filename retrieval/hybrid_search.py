@@ -1,4 +1,4 @@
-﻿import os
+import os
 os.environ["HF_HUB_OFFLINE"] = "1"
 """
 Tier 1 retrieval: dense (FAISS) + sparse (BM25) search over the
@@ -37,7 +37,7 @@ def _lazy_load():
         so.intra_op_num_threads = 1
         so.inter_op_num_threads = 1
         _session = ort.InferenceSession(
-            str(ONNX_MODEL_DIR / "model.onnx"),
+            str(ONNX_MODEL_DIR / "model_quantized.onnx"),
             sess_options=so,
             providers=["CPUExecutionProvider"],
         )
