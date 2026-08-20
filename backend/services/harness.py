@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tier 1 harness: process_query_fast() runs guardrail -> hybrid
 retrieval -> extraction -> grounding gate, all inside the measured
 <200ms budget.
@@ -13,7 +13,7 @@ from services.guardrails import check_input  # noqa: E402
 from services.grounding import grounding_gate  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "retrieval"))
-from hybrid_search import hybrid_retrieve, _lazy_load, _model  # noqa: E402
+from hybrid_search import hybrid_retrieve, _lazy_load  # noqa: E402
 from extractive import extract_answer  # noqa: E402
 
 
@@ -45,8 +45,7 @@ def process_query_fast(text: str) -> dict:
     latency["fusion_ms"] = retrieval_out["latency"]["fusion_ms"]
     retrieved = retrieval_out["results"]
 
-    from hybrid_search import _model as loaded_model
-    ans = extract_answer(query_text, retrieved, loaded_model)
+    ans = extract_answer(query_text, retrieved)
     latency["extraction_ms"] = ans["elapsed_ms"]
 
     t0 = time.perf_counter()
@@ -85,8 +84,8 @@ def process_query_fast(text: str) -> dict:
 
 if __name__ == "__main__":
     test_queries = [
-        "मैनहट्टन परियोजना की सफलता का प्रभाव क्या था?",
-        "आज मौसम कैसा है?",
+        "???????? ???????? ?? ????? ?? ?????? ???? ???",
+        "?? ???? ???? ???",
     ]
     for q in test_queries:
         print(f"\n{'='*60}\nQuery: {q}")
@@ -131,7 +130,7 @@ def process_query(text: str, skip_polish: bool = False) -> dict:
         )
         return fast_result
 
-    verify_out = verify_polish(polish_out["text"], fast_answer_text, loaded_model)
+    verify_out = verify_polish(polish_out["text"], fast_answer_text)
     fast_result["latency"]["verify_ms"] = verify_out["elapsed_ms"]
 
     if verify_out["verified"]:
