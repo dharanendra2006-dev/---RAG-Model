@@ -1,39 +1,30 @@
-# Single-container deploy: FastAPI serves both /api/* and the
+﻿# Single-container deploy: FastAPI serves both /api/* and the
 # frontend (see backend/api/main.py's StaticFiles mount). Prebuilt
 # FAISS/BM25 indexes ship inside the image (data/indexes/) so there's
-# no ingestion step at container startup - only the embedding model
-# downloads on first request (see _lazy_load() in retrieval/hybrid_search.py).
+# no ingestion step at container startup.
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# faiss-cpu and sentence-transformers/torch pull in some packages that
-# want basic build tools even when installing prebuilt wheels on
-# certain platforms - keep this minimal but present.
+# Install basic build tools required for faiss compilation steps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /app/backend/requirements.txt
-# CPU-only torch wheel installed first and pinned - without this,
-# sentence-transformers pulls the default CUDA build (800MB+ of
-# unused NVIDIA libs), which is what OOM'd the 512MB Render tier.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt
-# Bake the embedding model into the image at build time so
-# HF_HUB_OFFLINE=1 (set in retrieval/hybrid_search.py) has a real
-# cache to read from at runtime - avoids a live huggingface.co
-# download (and its failure risk) on every cold container start.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
 
+# Install lightweight ONNX and transformers dependencies from requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+
+# Copy all project directories into the image container.
+# Your pre-downloaded model assets in backend/models/e5-small-onnx 
+# are automatically backed into the image during this layer.
 COPY backend /app/backend
 COPY retrieval /app/retrieval
 COPY frontend /app/frontend
 COPY data /app/data
 
-# HF Spaces' Docker SDK expects the app on port 7860. Falls back to
-# $PORT (Render/Railway/Fly convention) if set, so this same image
-# works on any of them without edits.
+# Environment optimizations for hosting environments
 ENV PORT=7860
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
