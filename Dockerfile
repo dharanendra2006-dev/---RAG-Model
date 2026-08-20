@@ -18,7 +18,7 @@ COPY backend/requirements.txt /app/backend/requirements.txt
 # CPU-only torch wheel installed first and pinned - without this,
 # sentence-transformers pulls the default CUDA build (800MB+ of
 # unused NVIDIA libs), which is what OOM'd the 512MB Render tier.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 COPY backend /app/backend
