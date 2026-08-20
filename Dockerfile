@@ -35,6 +35,10 @@ COPY data /app/data
 # $PORT (Render/Railway/Fly convention) if set, so this same image
 # works on any of them without edits.
 ENV PORT=7860
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+ENV TOKENIZERS_PARALLELISM=false
 EXPOSE 7860
 
 CMD ["sh", "-c", "uvicorn backend.api.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
