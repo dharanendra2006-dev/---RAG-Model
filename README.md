@@ -1,8 +1,5 @@
-cd D:\hhgoa-task2-voice-rag
-
-@'
 ---
-title: Voice RAG - HH Goa 2026
+Title: Voice RAG - HH Goa 2026
 emoji: 🎙️
 colorFrom: indigo
 colorTo: teal
