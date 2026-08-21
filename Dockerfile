@@ -1,4 +1,4 @@
-﻿# Single-container deploy: FastAPI serves both /api/* and the
+# Single-container deploy: FastAPI serves both /api/* and the
 # frontend (see backend/api/main.py's StaticFiles mount). Prebuilt
 # FAISS/BM25 indexes ship inside the image (data/indexes/) so there's
 # no ingestion step at container startup.
@@ -25,6 +25,7 @@ COPY frontend /app/frontend
 COPY data /app/data
 
 # Environment optimizations for hosting environments
+ENV PYTHONUNBUFFERED=1
 ENV PORT=7860
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
