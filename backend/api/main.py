@@ -154,8 +154,10 @@ def query(req: QueryRequest):
                 "latency": {"stt_ms": stt_ms, "total_ms": (time.perf_counter() - t_start) * 1000},
             }
 
-    if not transcript:
+    if transcript is None and not req.audio_base64:
         raise HTTPException(status_code=400, detail="Provide either 'text' or 'audio_base64'.")
+    if not transcript:
+        transcript = ""  # explicit empty string - let check_input() in the harness handle this properly
 
     if req.mode == "polished":
         result = process_query(transcript)
