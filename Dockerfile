@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
+
 COPY backend/requirements.txt /app/backend/requirements.txt
 
 # Install lightweight ONNX and transformers dependencies from requirements.txt
@@ -24,6 +26,14 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 # Your pre-downloaded model assets in backend/models/e5-small-onnx 
 # are automatically backed into the image during this layer.
 COPY backend /app/backend
+
+# model_quantized.onnx ships via Git LFS, but Railway's build fetches
+# the repo as an archive (no .git dir), which never resolves LFS
+# pointers - onnxruntime would try to load a ~130-byte text pointer
+# instead of the real 118MB binary. Download the real file directly
+# from HF at build time instead, overwriting whatever git gave us.
+RUN curl -fL -o /app/backend/models/e5-small-onnx/model_quantized.onnx \
+    https://huggingface.co/silentchaos1908/voice-rag-e5-small-onnx/resolve/main/model_quantized.onnx
 COPY retrieval /app/retrieval
 COPY frontend /app/frontend
 COPY data /app/data
