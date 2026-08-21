@@ -1,4 +1,4 @@
-﻿import os
+import os
 os.environ["HF_HUB_OFFLINE"] = "1"
 """
 Tier 1 retrieval: dense (FAISS) + sparse (BM25) search over the
@@ -150,24 +150,23 @@ def sparse_search(query: str, k: int) -> tuple[list[int], list[float], float]:
 def hybrid_retrieve(query: str, top_k: int = 5) -> list[dict]:
     _lazy_load()
     v_k = getattr(settings, "vector_top_k", top_k * 3)
-
-    d_rows, _, _ = dense_search(query, k=v_k)
+    d_rows, d_scores, _ = dense_search(query, k=v_k)
     s_rows, _, _ = sparse_search(query, k=v_k)
-
+    dense_score_map = {row: score for row, score in zip(d_rows, d_scores)}
+    sparse_rank_map = {row: rank for rank, row in enumerate(s_rows)}
     rrf_scores = {}
     for rank, idx in enumerate(d_rows):
         rrf_scores[idx] = rrf_scores.get(idx, 0.0) + (1.0 / (60.0 + rank))
     for rank, idx in enumerate(s_rows):
         rrf_scores[idx] = rrf_scores.get(idx, 0.0) + (1.0 / (60.0 + rank))
-
     sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-
     results = []
     for idx, score in sorted_docs:
         row_data = _meta_df.iloc[idx].to_dict()
         row_data["rrf_score"] = float(score)
+        row_data["dense_score"] = dense_score_map.get(idx)
+        row_data["sparse_rank"] = sparse_rank_map.get(idx)
         results.append(row_data)
-
     return results
 
 if __name__ == "__main__":
