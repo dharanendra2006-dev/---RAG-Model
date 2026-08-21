@@ -27,7 +27,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(BACKEND_DIR / "services"))
-
+sys.path.insert(0, str(BACKEND_DIR / "retrieval"))
 # Removed heavy imports from the global scope to prevent 912 MB RAM pre-load.
 # They are now lazy-loaded inside the functions that actually use them.
 
@@ -42,10 +42,9 @@ def warmup():
     import resource
     logger.info("Warming up: pre-loading embedding model + indexes...")
     t0 = time.perf_counter()
-    from hybrid_search import hybrid_retrieve
+    from hybrid_search import hybrid_retrieve  # 👈 This will now work perfectly!
     logger.info(f"[MEM] before model load: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
-    hybrid_retrieve("test")
-    
+    hybrid_retrieve("test")    
     # Force Python to clear out any residual variables created during initialization
     gc.collect()
     
