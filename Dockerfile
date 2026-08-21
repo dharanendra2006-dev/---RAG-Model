@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
 
 
+
 # Copy all project directories into the image container.
 # Your pre-downloaded model assets in backend/models/e5-small-onnx 
 # are automatically backed into the image during this layer.

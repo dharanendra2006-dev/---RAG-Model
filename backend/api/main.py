@@ -12,6 +12,7 @@ import time
 import base64
 import logging
 import traceback
+import gc  # Added for garbage collection
 from pathlib import Path
 
 from typing import Optional
@@ -27,9 +28,8 @@ REPO_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(BACKEND_DIR / "services"))
 
-from config import settings  # noqa: E402
-from services.harness import process_query, process_query_fast  # noqa: E402
-from services.stt import transcribe_audio  # noqa: E402
+# Removed heavy imports from the global scope to prevent 912 MB RAM pre-load.
+# They are now lazy-loaded inside the functions that actually use them.
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voice-rag-api")
@@ -45,6 +45,10 @@ def warmup():
     from hybrid_search import hybrid_retrieve
     logger.info(f"[MEM] before model load: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
     hybrid_retrieve("test")
+    
+    # Force Python to clear out any residual variables created during initialization
+    gc.collect()
+    
     logger.info(f"[MEM] after hybrid_retrieve: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
     logger.info(f"Warmup complete in {(time.perf_counter() - t0) * 1000:.0f}ms. Server ready for real traffic.")
 
@@ -111,6 +115,10 @@ def health():
 
 @app.post("/api/query")
 def query(req: QueryRequest):
+    # Lazy load heavy dependencies only when an actual request hits the endpoint
+    from services.harness import process_query, process_query_fast
+    from services.stt import transcribe_audio
+
     t_start = time.perf_counter()
     stt_ms = None
     transcript = req.text
