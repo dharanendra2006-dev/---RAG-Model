@@ -111,7 +111,7 @@ def process_query(text: str, skip_polish: bool = False) -> dict:
         fast_result["polished_answer"] = None
         return fast_result
 
-    from hybrid_search import _model as loaded_model
+
 
     fast_answer_text = fast_result["fast_answer"]["text"]
     top_chunk = fast_result["retrieved"][0]["text"] if fast_result["retrieved"] else fast_answer_text
