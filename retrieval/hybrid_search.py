@@ -29,27 +29,41 @@ _bm25_data = None
 _meta_df = None
 
 
+def _mem_mb():
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
 def _lazy_load():
     global _session, _hf_tokenizer, _faiss_index, _bm25_data, _meta_df
+    print(f"[MEM] _lazy_load start: {_mem_mb():.0f} MB")
     if _session is None:
         print(f"[retrieval] loading ONNX embedding model from {ONNX_MODEL_DIR} ...")
         so = ort.SessionOptions()
         so.intra_op_num_threads = 1
         so.inter_op_num_threads = 1
+        so.enable_cpu_mem_arena = False
+        so.enable_mem_pattern = False
+        so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         _session = ort.InferenceSession(
             str(ONNX_MODEL_DIR / "model_quantized.onnx"),
             sess_options=so,
-            providers=["CPUExecutionProvider"],
+            providers=[("CPUExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"})],
         )
+        print(f"[MEM] after ONNX session: {_mem_mb():.0f} MB")
         _hf_tokenizer = AutoTokenizer.from_pretrained(str(ONNX_MODEL_DIR))
+        print(f"[MEM] after tokenizer: {_mem_mb():.0f} MB")
     if _faiss_index is None:
         _faiss_index = faiss.read_index(str(settings.index_dir / f"faiss_{STRATEGY}.index"))
+        print(f"[MEM] after faiss index: {_mem_mb():.0f} MB")
     if _bm25_data is None:
         with open(settings.index_dir / f"bm25_{STRATEGY}.pkl", "rb") as f:
             _bm25_data = pickle.load(f)
+        print(f"[MEM] after bm25: {_mem_mb():.0f} MB")
     if _meta_df is None:
         _meta_df = pd.read_parquet(settings.index_dir / f"meta_{STRATEGY}.parquet")
         _meta_df = _meta_df.reset_index(drop=True)
+        print(f"[MEM] after meta parquet: {_mem_mb():.0f} MB")
 
 
 def _encode(texts: list[str]) -> np.ndarray:
@@ -65,6 +79,7 @@ def _encode(texts: list[str]) -> np.ndarray:
     feed = {k: v for k, v in inputs.items() if k in input_names}
 
     outputs = _session.run(None, feed)
+    print(f"[MEM] after _session.run: {_mem_mb():.0f} MB")
     last_hidden = outputs[0]
 
     mask = inputs["attention_mask"][..., None].astype("float32")
