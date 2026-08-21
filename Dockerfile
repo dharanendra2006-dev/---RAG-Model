@@ -15,9 +15,8 @@ COPY backend/requirements.txt /app/backend/requirements.txt
 
 # Install lightweight ONNX and transformers dependencies from requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
-# Pre-download the Hugging Face embedding model during build time
-# Pre-download the SentenceTransformer model during build time
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
+# ONNX model files already exist on disk (backend/models/e5-small-onnx) - no download/pre-cache step needed, they get baked in via the COPY below.
+
 
 
 

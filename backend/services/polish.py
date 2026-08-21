@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tier 2: LLM polish + verify. Runs OUTSIDE the <200ms budget, wraps
 the Tier 1 fast answer, never runs before it.
 
@@ -159,8 +159,8 @@ def verify_polish(polished_text: str, fast_answer_text: str, threshold: float = 
 
 
 if __name__ == "__main__":
-    q = "मैनहट्टन परियोजना की सफलता का प्रभाव क्या था?"
-    fast = "मैनहट्टन प्रोजेक्ट का उद्देश्य यह देखना था कि परमाणु बम बनाना संभव है या नहीं।"
+    q = "Óñ«ÓÑêÓñ¿Óñ╣ÓñƒÓÑìÓñƒÓñ¿ Óñ¬Óñ░Óñ┐Óñ»ÓÑïÓñ£Óñ¿Óñ¥ ÓñòÓÑÇ Óñ©Óñ½Óñ▓ÓññÓñ¥ ÓñòÓñ¥ Óñ¬ÓÑìÓñ░Óñ¡Óñ¥ÓñÁ ÓñòÓÑìÓñ»Óñ¥ ÓñÑÓñ¥?"
+    fast = "Óñ«ÓÑêÓñ¿Óñ╣ÓñƒÓÑìÓñƒÓñ¿ Óñ¬ÓÑìÓñ░ÓÑïÓñ£ÓÑçÓñòÓÑìÓñƒ ÓñòÓñ¥ ÓñëÓñªÓÑìÓñªÓÑçÓñÂÓÑìÓñ» Óñ»Óñ╣ ÓñªÓÑçÓñûÓñ¿Óñ¥ ÓñÑÓñ¥ ÓñòÓñ┐ Óñ¬Óñ░Óñ«Óñ¥ÓñúÓÑü Óñ¼Óñ« Óñ¼Óñ¿Óñ¥Óñ¿Óñ¥ Óñ©ÓñéÓñ¡ÓñÁ Óñ╣ÓÑê Óñ»Óñ¥ Óñ¿Óñ╣ÓÑÇÓñéÓÑñ"
     result = polish_answer(q, fast, fast)
     print("Polish result:", result)
     if result["text"]:

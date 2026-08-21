@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tier 1 harness: process_query_fast() runs guardrail -> hybrid
 retrieval -> extraction -> grounding gate, all inside the measured
 <200ms budget.
