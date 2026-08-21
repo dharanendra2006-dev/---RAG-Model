@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+# Pre-download the Hugging Face embedding model during build time
+# Pre-download the SentenceTransformer model during build time
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
+
 
 COPY backend /app/backend
 COPY retrieval /app/retrieval
