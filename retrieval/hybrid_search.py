@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 import faiss
 import onnxruntime as ort
-from transformers import AutoTokenizer
+from tokenizers import Tokenizer
+import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 from config import settings  # noqa: E402
@@ -30,8 +31,17 @@ _meta_df = None
 
 
 def _mem_mb():
-    import resource
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    except ImportError:
+        # Windows has no `resource` module - fall back to psutil for
+        # local testing. Render (Linux) always uses the branch above.
+        try:
+            import psutil
+            return psutil.Process().memory_info().rss / 1024 / 1024
+        except ImportError:
+            return -1.0
 
 
 def _lazy_load():
@@ -51,7 +61,15 @@ def _lazy_load():
             providers=[("CPUExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"})],
         )
         print(f"[MEM] after ONNX session: {_mem_mb():.0f} MB")
-        _hf_tokenizer = AutoTokenizer.from_pretrained(str(ONNX_MODEL_DIR))
+        _hf_tokenizer = Tokenizer.from_file(str(ONNX_MODEL_DIR / "tokenizer.json"))
+        _special = json.loads((ONNX_MODEL_DIR / "special_tokens_map.json").read_text(encoding="utf-8"))
+        _pad_token = _special.get("pad_token")
+        if isinstance(_pad_token, dict):
+            _pad_token = _pad_token.get("content")
+        _pad_token = _pad_token or "<pad>"
+        _pad_id = _hf_tokenizer.token_to_id(_pad_token) or 0
+        _hf_tokenizer.enable_padding(pad_id=_pad_id, pad_token=_pad_token)
+        _hf_tokenizer.enable_truncation(max_length=512)
         print(f"[MEM] after tokenizer: {_mem_mb():.0f} MB")
     if _faiss_index is None:
         _faiss_index = faiss.read_index(str(settings.index_dir / f"faiss_{STRATEGY}.index"))
@@ -67,22 +85,20 @@ def _lazy_load():
 
 
 def _encode(texts: list[str]) -> np.ndarray:
-    inputs = _hf_tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        return_tensors="np",
-        return_token_type_ids=True
-    )
+    encs = _hf_tokenizer.encode_batch(texts)
+    input_ids = np.array([e.ids for e in encs], dtype=np.int64)
+    attention_mask = np.array([e.attention_mask for e in encs], dtype=np.int64)
+    token_type_ids = np.array([e.type_ids for e in encs], dtype=np.int64)
 
+    feed_all = {"input_ids": input_ids, "attention_mask": attention_mask, "token_type_ids": token_type_ids}
     input_names = {i.name for i in _session.get_inputs()}
-    feed = {k: v for k, v in inputs.items() if k in input_names}
+    feed = {k: v for k, v in feed_all.items() if k in input_names}
 
     outputs = _session.run(None, feed)
     print(f"[MEM] after _session.run: {_mem_mb():.0f} MB")
     last_hidden = outputs[0]
 
-    mask = inputs["attention_mask"][..., None].astype("float32")
+    mask = attention_mask[..., None].astype("float32")
     summed = (last_hidden * mask).sum(axis=1)
     counts = np.clip(mask.sum(axis=1), 1e-9, None)
     return (summed / counts).astype("float32")
