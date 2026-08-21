@@ -43,11 +43,12 @@ def warmup():
     logger.info("Warming up: pre-loading embedding model + indexes...")
     t0 = time.perf_counter()
     
-    # Use an absolute explicit package import statement instead
-    from backend.retrieval.hybrid_search import hybrid_retrieve
+    # Clean, direct internal directory import path layout
+    from retrieval.hybrid_search import hybrid_retrieve
     
     logger.info(f"[MEM] before model load: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
     hybrid_retrieve("test")
+
     
     # Force Python to clear out any residual variables created during initialization
     gc.collect()
