@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tier 1 harness: process_query_fast() runs guardrail -> hybrid
 retrieval -> extraction -> grounding gate, all inside the measured
 <200ms budget.
@@ -39,11 +39,9 @@ def process_query_fast(text: str) -> dict:
     query_text = guard["capped_text"]
 
     _lazy_load()
-    retrieval_out = hybrid_retrieve(query_text)
-    latency["query_embed_and_dense_ms"] = retrieval_out["latency"]["query_embed_and_dense_ms"]
-    latency["sparse_ms"] = retrieval_out["latency"]["sparse_ms"]
-    latency["fusion_ms"] = retrieval_out["latency"]["fusion_ms"]
-    retrieved = retrieval_out["results"]
+    t0 = time.perf_counter()
+    retrieved = hybrid_retrieve(query_text)
+    latency["retrieval_ms"] = (time.perf_counter() - t0) * 1000
 
     ans = extract_answer(query_text, retrieved)
     latency["extraction_ms"] = ans["elapsed_ms"]
