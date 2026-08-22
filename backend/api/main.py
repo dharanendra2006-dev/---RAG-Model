@@ -1,18 +1,8 @@
-"""
-HTTP layer. Wires voice/text input -> STT (if audio) -> harness ->
-JSON response. Deliberately thin - all real logic (guardrails,
-retrieval, grounding, polish) stays in services/, this just adapts
-it to HTTP.
-
-Run from repo root:
-    uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
-"""
-import sys
+﻿import sys
 import time
 import base64
 import logging
 import traceback
-import gc  # Added for garbage collection
 from pathlib import Path
 
 from typing import Optional
@@ -27,37 +17,16 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(BACKEND_DIR / "services"))
-sys.path.insert(0, str(REPO_ROOT / "retrieval"))
-# Removed heavy imports from the global scope to prevent 912 MB RAM pre-load.
-# They are now lazy-loaded inside the functions that actually use them.
+
+from config import settings  # noqa: E402
+from services.harness import process_query, process_query_fast  # noqa: E402
+from services.stt import transcribe_audio  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voice-rag-api")
 
 app = FastAPI(title="Voice RAG API")
 
-
-@app.on_event("startup")
-def warmup():
-    import resource
-    logger.info("Warming up: pre-loading embedding model + indexes...")
-    t0 = time.perf_counter()
-    
-    # Clean, direct internal directory import path layout
-    from hybrid_search import hybrid_retrieve
-    
-    logger.info(f"[MEM] before model load: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
-    hybrid_retrieve("test")
-
-    
-    # Force Python to clear out any residual variables created during initialization
-    gc.collect()
-    
-    logger.info(f"[MEM] after hybrid_retrieve: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
-    logger.info(f"Warmup complete in {(time.perf_counter() - t0) * 1000:.0f}ms. Server ready for real traffic.")
-
-# Permissive CORS for demo purposes - this is a hackathon submission
-# served from a single known frontend, not a multi-tenant product.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -66,12 +35,6 @@ app.add_middleware(
 )
 
 
-# Without this, any unhandled exception falls through to Starlette's
-# default plain-text "Internal Server Error" page - which breaks the
-# frontend's res.json() parse (that's the exact bug that surfaced:
-# "Unexpected token 'I', 'Internal S'... is not valid JSON"). This
-# guarantees /api/* always returns JSON, and logs the full traceback
-# server-side so the real cause is visible in the uvicorn terminal.
 @app.exception_handler(Exception)
 async def json_error_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception on %s %s", request.method, request.url.path)
@@ -87,17 +50,11 @@ async def json_error_handler(request: Request, exc: Exception):
 
 
 def _json_safe(obj):
-    """Recursively convert numpy/pandas scalar types to native Python
-    types. FastAPI's default encoder chokes on numpy.int64/float32/bool_
-    (common in retrieved-chunk metadata pulled straight from a pandas
-    DataFrame, e.g. is_selected_gt), which throws mid-serialization -
-    another way to end up with a non-JSON error response."""
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_json_safe(v) for v in obj]
     if hasattr(obj, "item") and callable(getattr(obj, "item")):
-        # numpy scalar types (int64, float32, bool_, etc.) all expose .item()
         try:
             return obj.item()
         except Exception:
@@ -109,7 +66,7 @@ class QueryRequest(BaseModel):
     text: Optional[str] = None
     audio_base64: Optional[str] = None
     audio_content_type: Optional[str] = "audio/webm"
-    mode: str = "fast"  # "fast" (guaranteed <200ms retrieval budget) or "polished" (adds an LLM call)
+    mode: str = "fast"
 
 
 @app.get("/api/health")
@@ -119,10 +76,6 @@ def health():
 
 @app.post("/api/query")
 def query(req: QueryRequest):
-    # Lazy load heavy dependencies only when an actual request hits the endpoint
-    from services.harness import process_query, process_query_fast
-    from services.stt import transcribe_audio
-
     t_start = time.perf_counter()
     stt_ms = None
     transcript = req.text
@@ -154,10 +107,8 @@ def query(req: QueryRequest):
                 "latency": {"stt_ms": stt_ms, "total_ms": (time.perf_counter() - t_start) * 1000},
             }
 
-    if transcript is None and not req.audio_base64:
-        raise HTTPException(status_code=400, detail="Provide either 'text' or 'audio_base64'.")
     if not transcript:
-        transcript = ""  # explicit empty string - let check_input() in the harness handle this properly
+        raise HTTPException(status_code=400, detail="Provide either 'text' or 'audio_base64'.")
 
     if req.mode == "polished":
         result = process_query(transcript)
@@ -174,8 +125,6 @@ def query(req: QueryRequest):
     return _json_safe(result)
 
 
-# Serve the minimal frontend, if present, at the root. Falls back
-# gracefully (API-only) if the frontend hasn't been built yet.
 FRONTEND_DIR = REPO_ROOT / "frontend"
 if FRONTEND_DIR.exists() and (FRONTEND_DIR / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
