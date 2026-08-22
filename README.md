@@ -16,50 +16,40 @@ This isn't a chatbot with a voice interface bolted on. It's a fast search-and-pr
 
 Two-tier design: a **measured, sub-200ms fast path** using extractive retrieval only (no LLM call), and an **optional slower path** that layers an LLM polish on top, explicitly outside the latency budget and never trusted blindly.
 
-```
-Voice input ──┐
-              ├──> STT (ElevenLabs Scribe v1) ──> transcript ──┐
-Typed input ──┘                                                 │
-                                                                  ▼
-                              ┌───────────────────────────────────────┐
-                              │  INPUT GUARDRAIL                       │
-                              │  - unsafe action+object phrase check   │
-                              │  - 512-char cap                        │
-                              │  - empty/whitespace rejection           │
-                              │  unsafe/empty → BLOCKED                 │
-                              └──────────────┬──────────────────────────┘
-                                             ▼
-                    ┌────────── <200ms BUDGET, MEASURED ──────────┐
-                    │  Embed query (multilingual-e5-small)         │
-                    │       │                    │                  │
-                    │       ▼                    ▼                  │
-                    │  Dense (FAISS)      Sparse (BM25, Devanagari- │
-                    │  cosine sim         safe tokenizer, stopword  │
-                    │                     filtered, real-overlap    │
-                    │                     required)                 │
-                    │       │                    │                  │
-                    │       └──── RRF fusion (rank-based) ────┘     │
-                    │                     │                          │
-                    │       EXTRACTIVE ANSWER (top fused chunk,     │
-                    │       reuses dense score — zero extra          │
-                    │       embedding calls)                         │
-                    │                     │                          │
-                    │            GROUNDING GATE                      │
-                    │   sparse-hit AND dense≥0.45  OR  dense≥0.854   │
-                    │   (dual-condition threshold, empirically       │
-                    │   calibrated — see below)                      │
-                    │     fail → ABSTAIN   │   pass → FAST ANSWER    │
-                    └─────────────────────┬───────────────────────────┘
-                                          ▼
-                         FAST ANSWER shown immediately
-                                          ▼
-                    LLM POLISH (Claude Sonnet, outside budget, optional)
-                                          ▼
-                    VERIFY (embedding similarity vs. fast answer)
-                    passes → polished answer │ fails/errors → keep fast answer
+```mermaid
+flowchart TD
+    A["🎤 Voice input"] --> B["ElevenLabs Scribe v1<br/>STT · real-time, outside budget"]
+    A2["⌨️ Typed question"] --> G1
+    B -->|transcript| G1
+    subgraph BUDGET["⏱️ 200ms BUDGET — measured window · P50 5.07ms"]
+        G1["🛡️ Input guardrail<br/>action+object unsafe check · 512-char cap"]
+        G1 -->|unsafe/empty| REFUSE["❌ Blocked"]
+        G1 -->|allowed| EMB["🔢 Embed query<br/>multilingual-e5-small"]
+        EMB --> DENSE["Dense — FAISS<br/>cosine similarity"]
+        EMB --> SPARSE["Sparse — BM25<br/>Devanagari-safe, stopword-filtered"]
+        DENSE --> RRF["RRF fusion<br/>by rank, not score"]
+        SPARSE --> RRF
+        RRF --> EXT["✂️ Extractive answer<br/>reuses dense score, zero extra embed calls"]
+        EXT --> G2["🛡️ Grounding gate"]
+        G2 -->|"sparse-hit AND dense≥0.45"| FAST["✅ FAST ANSWER<br/>grounded + cited"]
+        G2 -->|"dense≥0.854 (no keyword overlap)"| FAST
+        G2 -->|neither condition met| ABS["🤷 Abstain"]
+    end
+    FAST --> LLM["🤖 LLM polish<br/>Claude Sonnet · outside budget"]
+    LLM --> VER["🛡️ Verify polish<br/>embedding similarity vs. fast answer"]
+    VER -->|passes| FINAL["✨ Polished answer"]
+    VER -->|"fails / errors / times out"| KEEP["↩️ Keep the fast answer"]
+    style BUDGET fill:#0d2818,stroke:#3fb950,stroke-width:3px,color:#e6edf3
+    style FAST fill:#1a4d2e,stroke:#3fb950,stroke-width:2px,color:#ffffff
+    style FINAL fill:#1d3f6b,stroke:#4c9aff,color:#ffffff
+    style KEEP fill:#1a4d2e,stroke:#3fb950,color:#ffffff
+    style REFUSE fill:#4d1f1c,stroke:#f85149,color:#ffffff
+    style ABS fill:#4d3c15,stroke:#d29922,color:#ffffff
 ```
 
 **Why extractive-first:** an LLM API call cannot fit inside a 200ms budget under any real-world network condition. Rather than fudge the number, the fast path never calls an LLM at all — the answer is a directly-cited span from retrieved text, and its "support score" reuses the dense cosine similarity already computed during retrieval instead of re-embedding anything. Polish is strictly additive: it can only improve phrasing, never replace grounding, and any failure or drift falls back to the original fast answer.
+
+**Why the grounding gate has two conditions:** dense cosine similarity alone doesn't reliably separate relevant from irrelevant content — testing showed genuinely off-topic queries scoring 0.79–0.85, indistinguishable from real matches in that range. Requiring real lexical (BM25) corroboration catches most false positives cheaply; the higher dense-only bypass (0.854) exists specifically for true paraphrases that share no keywords with the source text at all, calibrated against the measured gap between confirmed false positives (max 0.845) and confirmed true positives (0.863+) on this corpus.
 
 ---
 
