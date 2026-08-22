@@ -1,162 +1,220 @@
----
-title: Voice RAG - HH Goa 2026
-emoji: 🎙️
-colorFrom: indigo
-colorTo: teal
-sdk: docker
-app_port: 7860
-pinned: false
+# श्रवण · Voice-Enabled RAG (HH Goa 2026, Task 2)
+
+Speak a question in Hindi → transcribed → retrieved against an indexed corpus → answered only when the evidence supports it. If it doesn't, the system says so instead of guessing.
+
+**Live deployment:** https://rag-model-production-3de3.up.railway.app
+
 ---
 
-# श्रवण — Voice-Enabled RAG (HH Goa 2026, Task 2)
+## Core principle
 
-A voice-enabled RAG pipeline over [AI4Bharat's MSMARCO-XI](https://huggingface.co/datasets/ai4bharat/MSMARCO-XI) Hindi corpus. Speaks a question in, retrieves grounded evidence, answers — and explicitly abstains when the evidence isn't there, rather than guessing.
+This isn't a chatbot with a voice interface bolted on. It's a fast search-and-proof engine that happens to accept voice. The strongest signal isn't the answers it gives — it's the answers it correctly refuses to give.
+
+---
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A["🎙️ Voice input"] --> B["ElevenLabs Scribe v1 (STT)<br/>~2.5-3.5s · network-bound, reported separately"]
-    C["⌨️ Typed question"] --> D
-    B --> D["Input guardrail<br/>empty / whitespace / length / unsafe-content checks"]
-    D -->|blocked| E["❌ Blocked"]
-    D -->|allowed| F["Embed query<br/>multilingual-e5-small"]
+Two-tier design: a **measured, sub-200ms fast path** using extractive retrieval only (no LLM call), and an **optional slower path** that layers an LLM polish on top, explicitly outside the latency budget and never trusted blindly.
 
-    subgraph Budget["&lt;200ms measured budget · P50 43ms · P70 47ms · P100 66ms"]
-        F --> G["Dense — FAISS IndexFlatIP<br/>exact cosine, 384-dim"]
-        F --> H["Sparse — BM25<br/>Devanagari-aware tokenizer + bilingual stopwords"]
-        G --> I["RRF fusion<br/>by rank, not raw score"]
-        H --> I
-        I --> J["Extractive answer<br/>best-supported span"]
-        J --> K{{"Grounding gate"}}
-    end
-
-    K -->|"support &lt; 0.45"| L["🟡 Abstain — 'not enough information'"]
-    K -->|"sparse hit OR dense ≥ 0.854"| M["✅ Fast answer<br/>grounded + cited"]
-    M --> N["LLM polish — Claude<br/>outside budget, optional, retried on transient errors"]
-    N --> O{{"Verify: embedding similarity<br/>to the original fast answer"}}
-    O -->|"drifts too far / fails / times out"| M
-    O -->|"passes"| P["✨ Polished answer"]
+```
+Voice input ──┐
+              ├──> STT (ElevenLabs Scribe v1) ──> transcript ──┐
+Typed input ──┘                                                 │
+                                                                  ▼
+                              ┌───────────────────────────────────────┐
+                              │  INPUT GUARDRAIL                       │
+                              │  - unsafe action+object phrase check   │
+                              │  - 512-char cap                        │
+                              │  - empty/whitespace rejection           │
+                              │  unsafe/empty → BLOCKED                 │
+                              └──────────────┬──────────────────────────┘
+                                             ▼
+                    ┌────────── <200ms BUDGET, MEASURED ──────────┐
+                    │  Embed query (multilingual-e5-small)         │
+                    │       │                    │                  │
+                    │       ▼                    ▼                  │
+                    │  Dense (FAISS)      Sparse (BM25, Devanagari- │
+                    │  cosine sim         safe tokenizer, stopword  │
+                    │                     filtered, real-overlap    │
+                    │                     required)                 │
+                    │       │                    │                  │
+                    │       └──── RRF fusion (rank-based) ────┘     │
+                    │                     │                          │
+                    │       EXTRACTIVE ANSWER (top fused chunk,     │
+                    │       reuses dense score — zero extra          │
+                    │       embedding calls)                         │
+                    │                     │                          │
+                    │            GROUNDING GATE                      │
+                    │   sparse-hit AND dense≥0.45  OR  dense≥0.854   │
+                    │   (dual-condition threshold, empirically       │
+                    │   calibrated — see below)                      │
+                    │     fail → ABSTAIN   │   pass → FAST ANSWER    │
+                    └─────────────────────┬───────────────────────────┘
+                                          ▼
+                         FAST ANSWER shown immediately
+                                          ▼
+                    LLM POLISH (Claude Sonnet, outside budget, optional)
+                                          ▼
+                    VERIFY (embedding similarity vs. fast answer)
+                    passes → polished answer │ fails/errors → keep fast answer
 ```
 
-**Why the grounding gate is two-sided, not one number:** dense cosine similarity alone can't tell a real semantic paraphrase apart from a plausible-sounding off-topic query — both can score 0.79–0.85. Requiring a BM25 keyword hit fixes that, but then rejects genuine synonym paraphrases with zero shared vocabulary. The gate accepts either: a lexical hit at any reasonable dense score, *or* a very high dense score on its own. The `0.854` threshold isn't a guess — it's centered between the highest false-positive we measured (`0.8454`, an off-topic query) and the lowest genuine paraphrase we measured (`0.8626`), giving even margin on both sides. See `backend/services/grounding.py` and `backend/config.py` for the full reasoning trail.
+**Why extractive-first:** an LLM API call cannot fit inside a 200ms budget under any real-world network condition. Rather than fudge the number, the fast path never calls an LLM at all — the answer is a directly-cited span from retrieved text, and its "support score" reuses the dense cosine similarity already computed during retrieval instead of re-embedding anything. Polish is strictly additive: it can only improve phrasing, never replace grounding, and any failure or drift falls back to the original fast answer.
 
-## Verified results
+---
 
-Everything below was actually run and measured, not estimated — reports live in `evaluation/reports/`.
+## Chunking
 
-| Check | Result |
+Four indexed strategies, not one naive fixed-size split:
+
+| Strategy | Approach |
 |---|---|
-| Guardrail test suite | **11/11 passed** — off-topic, unsafe input, empty/whitespace, semantic paraphrase, keyword-only, grounded-easy |
-| Pipeline latency (offline, 49 queries) | **P50 = 43ms · P70 = 47ms · P100 = 66ms** — 49/49 under the 200ms budget |
-| Live API latency (through FastAPI) | **P50 ≈ 110-170ms · P70 ≈ 150-180ms · P100 ≈ 200ms** — consistently within budget; the gap vs. the offline number is real (Windows dev-server thread scheduling for CPU-bound work), not framework serialization overhead |
-| STT (ElevenLabs Scribe v1) | **Verified end-to-end** with both a local audio file and a live browser mic recording (`webm`) — real transcription confirmed correct |
-| Retry logic | Anthropic + ElevenLabs calls both retry transient failures (connection drop, rate limit, 5xx) up to 3x with exponential backoff, verified against simulated failures; non-transient errors (bad auth, malformed request) fail immediately instead of wasting retries |
+| `fixed` | Fixed word-count windows with overlap — baseline |
+| `sentence` | Sentences packed up to a target size, respecting sentence boundaries |
+| `semantic` | Topic-boundary detection via embedding-similarity drop between consecutive sentences |
+| `contextual` | Chunks wrapped with parent-passage context attached |
 
-## Chunking strategies
+Every chunk carries metadata (document ID, parent ID, language, strategy, ground-truth relevance flag where available) rather than being bare text. `sentence` is the strategy served in production — it consistently produced tight, well-supported answers in testing without the overhead of dynamic semantic boundary detection at query time.
 
-Four strategies are actually built and indexed (`data/indexes/manifest.json`): **fixed-size, sentence-boundary, semantic, and contextual**. A fifth (`metadata_aware`) is defined in `backend/models/schemas.py`'s enum but was not indexed in this submission — noted here rather than left as a silent gap.
+---
+
+## Retrieval quality fixes (real bugs found and fixed during testing)
+
+Two specific issues were found empirically, not by inspection, and fixed:
+
+1. **BM25 stopword contamination.** Without filtering, function words (है, का, is, the...) created false "keyword overlap" for genuinely unrelated queries — e.g. a query about a "neighbor's phone number" matched an unrelated passage purely because both shared common grammatical words. Fixed with a bilingual stopword filter plus a minimum real-token-overlap requirement (2+ shared content words, or all of them for short queries).
+
+2. **Dense-only false positives.** Cosine similarity between short embeddings doesn't have a reliable "irrelevant" floor — genuinely off-topic queries scored 0.79–0.85, statistically indistinguishable from real matches in that range. Fixed by requiring either real lexical corroboration (BM25 hit) at a normal threshold, **or** a much higher dense-only bypass threshold (0.854) for genuine no-shared-keyword paraphrases — calibrated against the real measured gap between confirmed false positives (max 0.845) and confirmed true positives (0.863+) on this corpus.
+
+---
+
+## Guardrails
+
+| Guardrail | Mechanism |
+|---|---|
+| Unsafe input | Action+object phrase matching (e.g. "how to make a bomb"), not standalone nouns — avoids false-blocking legitimate factual mentions of weapons in historical content |
+| Off-topic | Grounding gate (above) |
+| Invalid input | Empty/whitespace input blocked with a proper structured response |
+| Query length | Capped at 512 characters before processing |
+| Abstention | Explicit "I don't have enough information in the provided corpus to answer that" — shown as a distinct UI state, not a generic error |
+
+**Verified: 11/11 test cases passing against the live deployment**, covering grounded/easy, semantic paraphrase (no shared keywords), keyword-only, off-topic (future event + personal), nonsense/gibberish, unsafe input (Hindi + English), empty input, whitespace-only input, and malformed/repetitive long input.
+
+---
+
+## Latency — measured, not claimed
+
+Two numbers, reported separately, because they measure different things:
+
+### Server-side pipeline latency (what the <200ms budget is about)
+Guardrail → retrieval → fusion → extraction → grounding gate, measured with `time.perf_counter()` inside the running server.
+
+| Metric | Value |
+|---|---|
+| P50 | 5.07ms |
+| P70 | 5.39ms |
+| P90 | 6.1ms |
+| P100 | 9.98ms |
+| **Under 200ms budget** | **49/49** |
+
+Measured against the live production deployment, 49 real queries (1 warmup excluded).
+
+### Network-inclusive round-trip latency (transparency, not budgeted)
+Full HTTP request from a client machine to Railway and back, including internet transit and STT where applicable.
+
+| Metric | Value |
+|---|---|
+| P50 | 1070ms |
+| P70 | 1133ms |
+| P90 | 1254ms |
+| P100 | 1413ms |
+
+This second number is *expected* to be higher — it includes real network transit that has nothing to do with pipeline efficiency. Reporting both, rather than only the flattering one, is deliberate.
+
+### Tier 2 (LLM polish), for reference
+Explicitly outside the budget by design. One live-tested example: `polish_ms: 3326ms`, `verify_ms: 21.7ms`, `end_to_end_ms: 3353ms`.
+
+Raw JSON results for every benchmark run are saved under `evaluation/reports/` for reproducibility.
+
+---
 
 ## Tech stack
 
-| Layer | Choice |
-|---|---|
-| Embeddings | `intfloat/multilingual-e5-small` (384-dim) |
-| Dense index | FAISS `IndexFlatIP` — exact search, not approximate (dataset size doesn't need HNSW's speed/recall tradeoff yet) |
-| Sparse index | `rank-bm25` over a custom Devanagari-aware tokenizer |
-| Fusion | Reciprocal Rank Fusion, by rank not raw score |
-| STT | ElevenLabs `scribe_v1` |
-| Polish LLM | Anthropic Claude, with embedding-similarity verification against the grounded fast answer before it's allowed to replace it |
-| API | FastAPI, JSON error handling on all routes |
-| Deploy | Docker → Hugging Face Spaces (Docker SDK) |
+| Component | Choice | Why |
+|---|---|---|
+| STT | ElevenLabs Scribe v1 | Task-permitted, verified against real SDK signature |
+| Embeddings | `intfloat/multilingual-e5-small` | CPU-fast, fits comfortably in constrained deployment RAM — chosen over larger multilingual models specifically for speed |
+| Dense index | FAISS `IndexFlatIP` (exact) | At this corpus size, exact search is still fast (see latency above); approximate indexing (HNSW) would only matter at much larger scale |
+| Sparse index | `rank_bm25`, custom Devanagari-safe tokenizer | Off-the-shelf `\w` regex mishandles Devanagari combining marks |
+| Fusion | Reciprocal Rank Fusion | Rank-based, avoids needing to normalize incompatible dense/sparse score scales |
+| Generation (polish only) | Claude Sonnet | Reword-only, explicitly constrained not to introduce new facts |
+| Backend | FastAPI | Serves both `/api/*` and the static frontend from one container |
+| Deployment | Docker on Railway | 1GB RAM tier — sufficient for this stack; smaller free tiers (512MB) OOM on `torch`/`sentence-transformers` import alone |
+| Retries | `tenacity`, on STT and polish calls | Distinguishes transient failures (timeout, 5xx, rate limit) from permanent ones (auth errors) — only retries the former |
+
+---
+
+## Known limitations (stated honestly)
+
+- **Hindi only.** The underlying dataset (`ai4bharat/MSMARCO-XI`) supports 14 languages; this build indexes Hindi only. A scoping decision made for time, not a technical ceiling.
+- **Corpus sample.** ~5,000 passages indexed for build speed, out of 199,590 available in the full Hindi split. Retrieval quality is real and tested against this sample; scaling up is straightforward but wasn't necessary to demonstrate the architecture.
+- **STT can mishear proper nouns.** Observed live: "मैनहट्टन" (Manhattan, a transliterated foreign term) was misheard as "मेहनत" (a common Hindi word) in one real test. The system correctly abstained on the resulting nonsense query rather than guessing — a real demonstration of the grounding gate working as intended, not a failure.
+- **Corpus contains scraped web noise.** Some passages (e.g. weather-widget content) are garbled by nature of the source dataset being open web crawls. The pipeline correctly retrieves and grounds against this content when topically relevant; the noise is a data-quality characteristic, not a pipeline bug.
+- **Dense-bypass threshold is corpus-specific.** The 0.854 calibration was measured against this specific corpus and embedding model; a significantly different corpus would need re-calibration using the same empirical method (measure real false-positive ceiling vs. true-positive floor, don't guess).
+
+---
 
 ## Repo structure
 
 ```
 backend/
-  api/main.py           FastAPI app — /api/query, /api/health, serves frontend/
-  config.py              All tunables, each with the reasoning for its value
+  api/main.py              FastAPI app, /api/query endpoint
   services/
-    harness.py            Orchestration: guardrail -> retrieve -> ground -> answer -> polish
-    guardrails.py          Input validation (empty, length, unsafe content)
-    grounding.py            The two-sided grounding gate described above
-    stt.py                   ElevenLabs speech-to-text, with retries
-    polish.py                Claude polish + verify, with retries
+    guardrails.py          Input validation, unsafe pattern matching
+    grounding.py           Dual-condition grounding gate
+    harness.py             Orchestrates the full Tier 1 + Tier 2 pipeline
+    polish.py              Tier 2 LLM polish + verify
+    stt.py                 ElevenLabs speech-to-text, with retries
+  config.py                All tunables in one place
+  models/schemas.py        Typed request/response contracts
+
 retrieval/
-  hybrid_search.py        Dense + sparse + RRF fusion
-  extractive.py             Best-supported-span answer extraction
-  tokenizer.py                Devanagari-aware BM25 tokenizer
-ingestion/                 Dataset subsample -> chunk -> index build scripts
-evaluation/
-  run_guardrail_tests.py  The 11-case guardrail suite
-  reports/                 Real output from every run, kept as evidence
-frontend/index.html       Single-file UI: mic input, text fallback, grounding meter
-Dockerfile                 Single-container deploy (API + frontend together)
+  tokenizer.py             Devanagari-safe, stopword-filtered tokenizer
+  hybrid_search.py         Dense + sparse + RRF fusion
+  extractive.py            Zero-embedding extractive answer
+  build_bm25.py            BM25 index builder
+
+ingestion/                 Dataset download, chunking, embedding, indexing
+evaluation/                Guardrail tests, latency benchmarks (local + live)
+frontend/                  Static UI served by the FastAPI app
 ```
 
-## Quickstart
+---
+
+## Running locally
 
 ```bash
-cd backend && pip install -r requirements.txt --break-system-packages
-cp .env.example .env   # fill in ANTHROPIC_API_KEY, ELEVENLABS_API_KEY
+cd backend && pip install -r requirements.txt
+cp .env.example .env  # add ANTHROPIC_API_KEY, ELEVENLABS_API_KEY
 
-cd ../ingestion
-python 00_check_configs.py
-python 01_subsample.py
-python 03_build_chunk_table.py
-python 04_build_index.py
+# Build indexes (see ingestion/ scripts in order 00→04)
+cd ../retrieval && python build_bm25.py
 
-cd ../evaluation
-python run_guardrail_tests.py   # should print 11/11 passed
-
-cd ..
-uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
-# open http://localhost:8000
+cd ../backend
+uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
-## Deployment (live link)
+Then visit `http://localhost:8000`.
 
-Target: Hugging Face Spaces, Docker SDK. Chosen over Render/Railway free tiers because this stack (torch + sentence-transformers + faiss) needs more RAM than their free 512MB-1GB tiers usually allow without OOM-killing the container — HF's free CPU Basic tier gives 16GB.
+## Reproducing the benchmarks
 
-The `Dockerfile` at repo root builds one container that serves both the API (`/api/*`) and the frontend (`/`).
-
-### One-time setup
-
-```powershell
-git lfs install
-git lfs track "*.index" "*.pkl" "*.parquet"
-git add .gitattributes
-git add .
-git commit -m "Add Docker deploy, API, STT, frontend"
+```bash
+cd evaluation
+python run_guardrail_tests.py          # local guardrail suite
+python test_live_guardrails.py <url>   # against a live deployment
+python run_live_batch.py <url>         # latency percentiles against a live deployment
 ```
 
-1. Create a Space at huggingface.co/new-space — SDK: **Docker**.
-2. In the Space's **Settings → Variables and secrets**, add as *secrets*:
-   - `ANTHROPIC_API_KEY`
-   - `ELEVENLABS_API_KEY`
-3. Push:
+---
 
-```powershell
-git remote add space https://huggingface.co/spaces/<username>/<space-name>
-git push space main
-```
-
-4. Watch the **Build logs** tab. First build takes a while (torch + faiss + model weights). Once it says "Running", the Space's URL is the live link.
-
-### If the build fails or the app 500s on the deployed Space
-Paste the build log, or the JSON error from `/api/query` (see the exception handler in `backend/api/main.py`) — same debugging approach used throughout this project's development.
-
-<details>
-<summary><strong>Development log</strong></summary>
-
-**Day 1 (Aug 14):** repo scaffold, config + typed schemas, dataset verification script, streaming subsample, 4 chunk views built and indexed, retrieval smoke test passing.
-
-**Day 2 (Aug 15):** BM25 index, RRF fusion, retrieval quality checks against `is_selected_gt`.
-
-**Guardrail tuning:** the grounding threshold went through several real iterations — starting with dense-only similarity (found unreliable, off-topic queries scored as high as 0.85), then requiring a BM25 hit unconditionally (fixed false positives but broke genuine paraphrases with no shared vocabulary), then the current two-sided gate with a threshold centered on real measured margin rather than guessed.
-
-**STT and API:** built and wired end-to-end, verified against the real ElevenLabs SDK interface, tested with real audio (both file-based and live browser recording).
-
-**Retry logic:** added and verified against simulated transient/non-transient failures for both the Anthropic and ElevenLabs calls.
-
-</details>
+Built for HH Goa 2026, Task 2 — voice-enabled RAG. #RAGInGoa
