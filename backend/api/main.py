@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import time
 import base64
 import logging
@@ -107,8 +107,10 @@ def query(req: QueryRequest):
                 "latency": {"stt_ms": stt_ms, "total_ms": (time.perf_counter() - t_start) * 1000},
             }
 
-    if not transcript:
+    if req.text is None and not req.audio_base64:
         raise HTTPException(status_code=400, detail="Provide either 'text' or 'audio_base64'.")
+    if transcript is None:
+        transcript = ""
 
     if req.mode == "polished":
         result = process_query(transcript)
