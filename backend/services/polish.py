@@ -134,21 +134,20 @@ def polish_answer(query: str, fast_answer_text: str, source_text: str) -> dict:
         }
 
 
-def verify_polish(polished_text: str, fast_answer_text: str, threshold: float = None) -> dict:
+def verify_polish(polished_text: str, fast_answer_text: str, model, threshold: float = None) -> dict:
     """
     Embedding-similarity check between the polished text and the
     ORIGINAL fast (grounded) answer. Cheap reuse of the already-
     loaded embedding model - no extra API call needed for this.
     """
     import numpy as np
-    from hybrid_search import _encode
     t0 = time.perf_counter()
     threshold = threshold or settings.min_groundedness_score
 
     if not polished_text:
         return {"verified": False, "reason": "empty_polish_output", "elapsed_ms": (time.perf_counter() - t0) * 1000}
 
-    embs = _encode(["passage: " + polished_text, "passage: " + fast_answer_text])
+    embs = model.encode(["passage: " + polished_text, "passage: " + fast_answer_text], convert_to_numpy=True)
     embs = embs / (np.linalg.norm(embs, axis=1, keepdims=True) + 1e-8)
     sim = float(embs[0] @ embs[1])
 

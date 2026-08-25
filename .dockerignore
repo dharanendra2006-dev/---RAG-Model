@@ -1,2 +1,9 @@
-﻿backend/models/e5-small-onnx/model.onnx
-backend/models/e5-small-onnx/.cache/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+evaluation/reports/
+*.log
+.env

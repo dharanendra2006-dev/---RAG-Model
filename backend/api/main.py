@@ -36,18 +36,6 @@ logger = logging.getLogger("voice-rag-api")
 
 app = FastAPI(title="Voice RAG API")
 
-
-@app.on_event("startup")
-def warmup():
-    import resource
-    logger.info("Warming up: pre-loading embedding model + indexes...")
-    t0 = time.perf_counter()
-    from hybrid_search import hybrid_retrieve
-    logger.info(f"[MEM] before model load: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
-    hybrid_retrieve("test")
-    logger.info(f"[MEM] after hybrid_retrieve: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
-    logger.info(f"Warmup complete in {(time.perf_counter() - t0) * 1000:.0f}ms. Server ready for real traffic.")
-
 # Permissive CORS for demo purposes - this is a hackathon submission
 # served from a single known frontend, not a multi-tenant product.
 app.add_middleware(

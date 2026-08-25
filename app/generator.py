@@ -82,6 +82,10 @@ def generate_answer(query: str, results):
         )
 
     top = results[0]
+    # .score is present on this suite's own _Context dataclass but is
+    # NOT part of the required duck-typed interface (only .text/.source
+    # are guaranteed per eval/target.py's docstring) - accessed
+    # defensively, never assumed to exist.
     top_score = getattr(top, "score", None)
 
     has_lexical_hit = _lexical_overlap(query, top.text)
