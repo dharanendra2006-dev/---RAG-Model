@@ -42,7 +42,7 @@ def _lazy_load():
     global _model, _faiss_index, _bm25_data, _meta_df
     if _model is None:
         print(f"[retrieval] loading embedding model {settings.embedding_model} ...")
-        _model = SentenceTransformer(settings.embedding_model, model_kwargs={"torch_dtype": torch.float16})
+        _model = SentenceTransformer(settings.embedding_model, model_kwargs={"torch_dtype": torch.float16, "low_cpu_mem_usage": True})
     if _faiss_index is None:
         _faiss_index = faiss.read_index(str(settings.index_dir / f"faiss_{STRATEGY}.index"))
     if _bm25_data is None:
