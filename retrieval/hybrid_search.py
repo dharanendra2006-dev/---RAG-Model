@@ -1,8 +1,16 @@
 import os
 os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 """
 Tier 1 retrieval: dense (FAISS) + sparse (BM25) search over the
 served chunk strategy, combined via Reciprocal Rank Fusion (RRF).
+Thread pools capped above (before numpy/torch/faiss import) to reduce
+peak memory on Railway's 1GB trial tier - each thread holds its own
+compute buffers, and this is the difference between fitting and an
+OOM kill during model load or inference.
 """
 import sys
 import time
@@ -11,7 +19,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import faiss
+import torch
 from sentence_transformers import SentenceTransformer
+
+torch.set_num_threads(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 from config import settings  # noqa: E402
