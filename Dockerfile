@@ -17,6 +17,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Install CPU-only torch explicitly, BEFORE the rest of requirements.txt.
+# Standard `pip install torch` from PyPI bundles CUDA runtime libraries
+# by default even though this app never uses a GPU - that unused bulk
+# sits in memory the moment torch is imported, before the model even
+# loads. This forces the real CPU-only wheel instead; identical
+# computation and identical scores, just without the GPU baggage.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
